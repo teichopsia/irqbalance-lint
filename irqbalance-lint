@@ -1,0 +1,67 @@
+#!/usr/bin/python3
+
+import sys
+import os
+import re
+
+def main():
+	ret=2
+	def context(t=None):
+		r=os.environ.get('IRQROOT','/')
+		if t:
+			r=os.path.join(r,t)
+		return r
+	chroot=context()
+	def get_irq():
+		r={}
+		ifile=os.path.join(chroot,'proc/interrupts')
+		with open(ifile,'rt') as k:
+			for line in k:
+				if re.search(r'(?:iavf|mlx|i40e)',line):
+					irq,use=line.split(':',1)
+					use=use.split(' ')[-1]
+					irq=int(irq.strip())
+					use=use.strip()
+					r[irq]=use
+		return r
+	irq=get_irq()
+	def get_affinity():
+		r={}
+		def walker(base):
+			for kr,ks,kf in os.walk(base):
+				for kv in kf:
+					yield os.path.join(kr,kv)
+		for t in walker(os.path.join(chroot,'proc/irq')):
+			w=os.path.split(t)
+			if re.match(r'^smp_affinity_list$',w[1]):
+				irqi=int(os.path.split(w[0])[1])
+				with open(t,'rt') as k:
+					j=k.read().strip()
+					if '-' in j:
+						a,z=j.split('-')
+						for i in range(int(a),int(z)+1):
+							r.setdefault(i,set())
+							r[i].add(irqi)
+					else:
+						j=int(j)
+						r.setdefault(j,set())
+						r[j].add(irqi)
+		return r
+	aff=get_affinity()
+	focus=set(irq.keys())
+	fail=0
+	for k in aff:
+		j=focus & aff[k]
+		if len(j)>1:
+			fail+=1
+			print('multiple on cpu core',k,'irqs=('+','.join(map(lambda x:str(x),j))+')')
+	if fail>0:
+		r=1
+	else:
+		r=0
+	return r
+
+if __name__=='__main__':
+	r=main()
+	sys.stdout=None
+	sys.exit(r)
